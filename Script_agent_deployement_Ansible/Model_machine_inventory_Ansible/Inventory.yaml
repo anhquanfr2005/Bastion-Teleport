@@ -1,0 +1,22 @@
+Serveur_Linux:
+  hosts:
+    VM_Test:
+      ansible_host: 1.2.3.4
+  var:
+  ansible_ssh_pass: 123456789
+  ansible_user: toto
+  ansible_port: 22
+  ansible_sudo_pass: 123456789
+  label: 'env=prod'
+  clegpg: |-
+    1111111111111111111111111111111111111111
+    1111111111111111111111111111111111111111
+    1111111111111111111111111111111111111111
+
+VM-BASTION-01:
+  hosts:
+    VM-BASTION-01:
+      ansible_host: 4.3.2.1
+      ansible_user: toto
+      ansible_ssh_pass: 123456789
+      ansible_sudo_pass: 123456789
