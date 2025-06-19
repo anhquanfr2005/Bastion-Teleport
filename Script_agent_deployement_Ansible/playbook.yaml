@@ -1,0 +1,86 @@
+- name: Deployment of teleport-agent on park of server
+  hosts: serveur_linux
+  become: true
+  serial: 1
+  tasks:
+
+    - name: verif if node exist in cluster or not and skip all steps after 
+      delegate_to: VM-BASTION-01
+      ansible.builtin.shell: sudo tctl nodes ls --search={{ansible_hostname}} | tail -n +3 | awk '{print $1}'
+      register: enrollment
+
+    - name: verificate if the taggeted machine can contact bastion by "teleport.domainname.com" to avoid error during running script
+      ansible.builtin.wait_for:
+        host: teleport.imsnetworks.com  # Hostname of bastion
+        port: 443
+        state: started
+        delay: 0      # delay between each test
+        timeout: 4   # avoid infinite test loop that block script
+      register: verif
+      when: enrollment.stdout == ""
+      ignore_errors: true
+
+    - name: Creation of token on bastion server, and stock the result into variable "token"
+      delegate_to: VM-BASTION-01
+      ansible.builtin.shell: sudo tctl tokens add --type=node --format=text
+      register: token
+      when: verif is succeeded and enrollment.stdout == ""
+
+    # - name: This bloc able to print variable token, result will be in json, and we will extract token value with this "{{token.stdout}}"
+    #   debug: 
+    #     msg: "{{token}}"
+    - name: verificate if service exist or not
+      ansible.builtin.shell: sudo systemctl status teleport
+      register: service
+      when: verif is succeeded and enrollment.stdout == ""
+      ignore_errors: true
+
+    - name: Add gpg key on keyrings folder allow me to access teleport repository
+      ansible.builtin.shell: echo "{{clegpg}}" > /usr/share/keyrings/teleport-archive-keyring.asc
+      when: verif is succeeded and enrollment.stdout == "" and service is failed
+
+    - name: Add respository APT teleport for Debian distribution and ubuntu
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/teleport-archive-keyring.asc] https://apt.releases.teleport.dev/{{ansible_facts['distribution'] | lower }} {{ ansible_distribution_release }} stable/v16"
+      when: verif is succeeded and enrollment.stdout == "" and service is failed
+      
+    - name: Install teleport to allow installation of agent-teleport
+      ansible.builtin.apt:
+        update_cache: yes
+        name: teleport
+        state: present
+      when: verif is succeeded and enrollment.stdout == "" and service is failed
+
+    - name: Download agent-teleport + creation of link between targeted server and Bastion server
+      ansible.builtin.shell: sudo teleport node configure --output=file:///etc/teleport.yaml --token={{token.stdout}} --labels={{label}} --proxy=teleport.imsnetworks.com:443
+      when: verif is succeeded and enrollment.stdout == ""
+      register: existe
+      ignore_errors: true
+
+    - name: Delete teleport file to avoid another error
+      ansible.builtin.shell: sudo rm /etc/teleport.yaml
+      when: verif is succeeded and existe is failed and enrollment.stdout == ""
+      register: ok  # Print this variable if in case of error
+
+    - name: Retry download agent-teleport + creation of link between targeted server and Bastion server
+      ansible.builtin.shell: sudo teleport node configure --output=file:///etc/teleport.yaml --token={{token.stdout}} --labels={{label}} --proxy=teleport.imsnetworks.com:443
+      when: verif is succeeded and existe is failed and enrollment.stdout == ""
+      register: remplacer  # Print this variable if in case of error
+
+    - name: Enable service teleport, the state is not affected
+      ansible.builtin.service:
+        name: teleport
+        enabled: yes # enable teleport service
+      when: verif is succeeded and remplacer is succeeded and enrollment.stdout == "" or verif is succeeded and existe is succeeded and enrollment.stdout == ""
+
+    - name: Verification of teleport-agent state, and if teleport is not active, we will activate with this bloc
+      ansible.builtin.service:
+        name: teleport
+        state: started # start teleport service if not
+      when: verif is succeeded and remplacer is succeeded and enrollment.stdout == ""
+
+    - name: Restart service teleport, to apply modification
+      ansible.builtin.service:
+        name: teleport
+        state: restarted
+      when: verif is succeeded and remplacer is succeeded and enrollment.stdout == ""
